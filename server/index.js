@@ -33,9 +33,9 @@ app.get('/api/health', (req, res) => {
 
 app.post('/api/hcs/publish', async (req, res) => {
   try {
-    const { email, message, eventId } = req.body || {};
-    if (!email || !message || !eventId) {
-      return res.status(400).json({ status: 'error', message: 'email, message, and eventId are required' });
+    const { email_id, message, event_id } = req.body || {};
+    if (!email_id || !message || !event_id) {
+      return res.status(400).json({ status: 'error', message: 'email_id, message, and event_id are required' });
     }
     if (!hederaConfigured) {
       return res.status(500).json({ status: 'error', message: 'Hedera not configured on server' });
@@ -43,8 +43,8 @@ app.post('/api/hcs/publish', async (req, res) => {
     if (!topicsConfigured) {
       return res.status(500).json({ status: 'error', message: 'Topic IDs not configured on server' });
     }
-    console.log('[API] /api/hcs/publish received', { email, message, eventId });
-    await publishJson({ email, message, eventId });
+    console.log('[API] /api/hcs/publish received', { email_id, message, event_id });
+    await publishJson({ email_id, message, event_id });
     console.log('[API] Published to SOURCE_TOPIC_ID');
     res.json({ status: 'success' });
   } catch (e) {

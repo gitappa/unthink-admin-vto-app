@@ -558,17 +558,22 @@ function AlertsInbox() {
         // Set up real-time listener for Firestore alerts collection
         const alertsCollection = collection(db, 'test alert');
         
-        // Try without ordering first to see if data exists
-        const q = query(alertsCollection, limit(50));
+        // Order by timestamp to show latest first
+        const q = query(alertsCollection, orderBy('timestamp', 'desc'), limit(50));
         
         const unsubscribe = onSnapshot(q, (snapshot) => {
 
             
+            // Map and ensure newest first (extra client-side sort as fallback)
             const alertsData = snapshot.docs.map(doc => ({
                 id: doc.id,
                 ...doc.data(),
                 read: false // Default to unread for new alerts
-            }));
+            })).sort((a, b) => {
+                const at = a.timestamp?.seconds ?? (a.timestamp?._seconds ?? 0);
+                const bt = b.timestamp?.seconds ?? (b.timestamp?._seconds ?? 0);
+                return bt - at;
+            });
             console.log('Processed alerts data:', alertsData);
             setAlerts(alertsData);
             setLoading(false);
@@ -606,9 +611,9 @@ function AlertsInbox() {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    email: selectedAlert.emaild_id,
+                    email_id: selectedAlert.emaild_id,
                     message: `Request to publish the collection: ${selectedAlert.collection_path}`,
-                    eventId: selectedAlert.event_id
+                    event_id: selectedAlert.event_id
                 })
             });
 
@@ -657,18 +662,23 @@ function AlertsInbox() {
                 <div className="space-y-4">
                     {alerts.map(alert => (
                         <div key={alert.id} className={`bg-white p-6 rounded-xl border flex items-start space-x-4 ${alert.read ? 'opacity-60' : ''}`}>
-                            <div className="p-3 rounded-lg bg-green-100 text-green-600">
-                                <PlusCircleIcon />
-                            </div>
                             <div className="flex-grow">
-                                <h4 className="font-semibold text-gray-800 text-lg">
-                                    A new collection is created by: <span className="text-indigo-600">{alert.name}</span>
-                                </h4>
+                                {alert.alert_type === 'request_status' ? (
+                                    <h4 className="font-semibold text-gray-800 text-lg">
+                                        <span className="text-indigo-600">{alert.name}</span> has <span className="text-indigo-600">{alert.request_status}</span> the below collection to publish
+                                    </h4>
+                                ) : (
+                                    <h4 className="font-semibold text-gray-800 text-lg">
+                                        A new collection is created by: <span className="text-indigo-600">{alert.name}</span>
+                                    </h4>
+                                )}
                                 <div className="mt-3 space-y-2">
-                                    <div className="flex items-center space-x-2">
-                                        <span className="text-sm font-medium text-gray-600">Email ID:</span>
-                                        <span className="text-sm text-gray-800">{alert.emaild_id}</span>
-                                    </div>
+                                    {alert.alert_type === 'collection_created' && (
+                                        <div className="flex items-center space-x-2">
+                                            <span className="text-sm font-medium text-gray-600">Email ID:</span>
+                                            <span className="text-sm text-gray-800">{alert.emaild_id}</span>
+                                        </div>
+                                    )}
                                     <div className="flex items-center space-x-2">
                                         <span className="text-sm font-medium text-gray-600">Collection Link:</span>
                                         <a 
@@ -680,18 +690,20 @@ function AlertsInbox() {
                                             {alert.collection_path}
                                         </a>
                                     </div>
-                                    <div className="flex items-center space-x-2">
-                                        <span className="text-sm font-medium text-gray-600">Event id:</span>
-                                        <span className="text-sm text-gray-800">{alert.event_id}</span>
-                                    </div>
+                                    {alert.alert_type !== 'request_status' && (
+                                        <div className="flex items-center space-x-2">
+                                            <span className="text-sm font-medium text-gray-600">Event id:</span>
+                                            <span className="text-sm text-gray-800">{alert.event_id}</span>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
-                            {!alert.read && (
+                            {alert.alert_type !== 'request_status' && !alert.read && (
                                 <button 
                                     onClick={() => handleSendRequest(alert)} 
                                     className="text-sm font-medium text-indigo-600 hover:text-indigo-800 px-3 py-1 rounded-md hover:bg-indigo-50"
                                 >
-                                    Send Request
+                                    Permission Request
                                 </button>
                             )}
                         </div>

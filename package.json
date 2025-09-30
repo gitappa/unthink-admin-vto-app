@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@hashgraph/sdk": "^2.7.0",
+    "@hashgraphonline/standards-sdk": "^0.1.107",
     "@tailwindcss/vite": "^4.1.13",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
