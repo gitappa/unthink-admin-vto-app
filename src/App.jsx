@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, limit, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from './firebase';
 
 console.log('db', db._databaseId);
@@ -41,9 +41,9 @@ const MOCK_CAMPAIGNS = [
     },
 ];
 
-const MOCK_JOURNEY_TEMPLATES = [
+const MOCK_EVENT_TEMPLATES = [
     {
-        id: 'journey1',
+        id: 'event1',
         name: 'Standard VTO Flow',
         steps: [
             { id: 's1', type: 'WELCOME_SCREEN', title: 'Welcome to the Summer Event!', description: 'Complete the steps to earn an exclusive discount.', buttonText: 'Let\'s Go!' },
@@ -108,7 +108,7 @@ const LayersIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" heig
 
 const ACTION_TYPES = { UGC_CREATION: "Add to showcase collection", WISHLIST_ADD: "Add to Wishlist", REFERRAL: "User Referral", SOCIAL_SHARE: "Social Media Share", FEEDBACK: "Provide Feedback" };
 const REWARD_TYPES = { PERCENTAGE: "Percentage Discount", FIXED_AMOUNT: "Fixed Amount Discount", FREE_ITEM: "Free Item", POINTS: "Loyalty Points" };
-const JOURNEY_STEP_TYPES = { WELCOME_SCREEN: "Welcome Screen", ACTION_VTO: "Virtual Try-On", ACTION_SHOWCASE: "Add to Showcase", ACTION_WISHLIST: "Add to Wishlist", THANK_YOU_SCREEN: "Thank You Screen" };
+const EVENT_STEP_TYPES = { WELCOME_SCREEN: "Welcome Screen", ACTION_VTO: "Virtual Try-On", ACTION_SHOWCASE: "Add to Showcase", ACTION_WISHLIST: "Add to Wishlist", THANK_YOU_SCREEN: "Thank You Screen" };
 const RULE_ACTION_TYPES = { SEND_IN_APP_MESSAGE: "Send In-App Message", SEND_COUPON: "Send Coupon", SEND_EMAIL: "Send Email", SEND_HCS_PERMISSION_REQUEST: "Send HCS Permission Request", SEND_HCS_20_TOKEN: "Send HTS-20 Token" };
 
 
@@ -147,7 +147,7 @@ export default function App() {
                          <ul className="space-y-1">
                             <li><a href="#" onClick={(e) => { e.preventDefault(); setCurrentView('config'); }} className={`flex items-center space-x-3 p-2 rounded-lg text-sm font-medium ${currentView === 'config' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}`}><LayoutDashboardIcon /> <span>Campaigns</span></a></li>
                             <li><a href="#" onClick={(e) => { e.preventDefault(); setCurrentView('stats'); }} className={`flex items-center space-x-3 p-2 rounded-lg text-sm font-medium ${currentView === 'stats' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}`}><BarChartIcon /> <span>Stats</span></a></li>
-                            <li><a href="#" onClick={(e) => { e.preventDefault(); setCurrentView('journeys'); }} className={`flex items-center space-x-3 p-2 rounded-lg text-sm font-medium ${currentView === 'journeys' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}`}><RouteIcon /> <span>Journeys</span></a></li>
+                            <li><a href="#" onClick={(e) => { e.preventDefault(); setCurrentView('event-templates'); }} className={`flex items-center space-x-3 p-2 rounded-lg text-sm font-medium ${currentView === 'event-templates' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}`}><RouteIcon /> <span>Event Templates</span></a></li>
                             <li><a href="#" onClick={(e) => { e.preventDefault(); setCurrentView('actions'); }} className={`flex items-center space-x-3 p-2 rounded-lg text-sm font-medium ${currentView === 'actions' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}`}><ZapIcon /> <span>Actions</span></a></li>
                             <li><a href="#" onClick={(e) => { e.preventDefault(); setCurrentView('alerts'); }} className={`flex items-center space-x-3 p-2 rounded-lg text-sm font-medium ${currentView === 'alerts' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}`}><BellIcon /> <span>Alerts Inbox</span></a></li>
                          </ul>
@@ -165,7 +165,7 @@ export default function App() {
                 {currentView === 'config' && (selectedCampaign ? <ConfigDashboard campaign={selectedCampaign} onSave={handleUpdateCampaign} /> : <div className="text-center text-gray-500"><h2>No Campaign Selected</h2><p>Select or create a new campaign.</p></div>)}
                 {currentView === 'stats' && (selectedCampaign ? <StatsDashboard campaign={selectedCampaign} /> : <div className="text-center text-gray-500"><h2>No Campaign Selected</h2><p>Select a campaign to view its stats.</p></div>)}
                 {currentView === 'alerts' && <AlertsInbox />}
-                {currentView === 'journeys' && <JourneyBuilder />}
+                {currentView === 'event-templates' && <EventTemplateBuilder />}
                 {currentView === 'actions' && <ActionsBuilder />}
             </main>
         </div>
@@ -383,10 +383,31 @@ function ActionsBuilder() {
     );
 }
 
-function JourneyBuilder() {
-    const [templates, setTemplates] = useState(MOCK_JOURNEY_TEMPLATES);
-    const [selectedTemplate, setSelectedTemplate] = useState(MOCK_JOURNEY_TEMPLATES[0]);
-    const [formData, setFormData] = useState(MOCK_JOURNEY_TEMPLATES[0]);
+function EventTemplateBuilder() {
+    const [templates, setTemplates] = useState([]);
+    const [selectedTemplate, setSelectedTemplate] = useState(null);
+    const [formData, setFormData] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        // Set up real-time listener for Firestore event_template collection
+        const templatesCollection = collection(db, 'event_template');
+        const q = query(templatesCollection, orderBy('createdAt', 'desc'));
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const templatesData = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            setTemplates(templatesData);
+            setLoading(false);
+        }, (error) => {
+            console.error('Error fetching event templates:', error);
+            setLoading(false);
+        });
+
+        return () => unsubscribe();
+    }, []);
 
     useEffect(() => {
         setFormData(selectedTemplate);
@@ -394,15 +415,57 @@ function JourneyBuilder() {
 
     const handleSelectTemplate = (t) => setSelectedTemplate(t);
 
-    const handleAddNewTemplate = () => {
-        const newT = { id: `journey${Date.now()}`, name: `New Journey ${new Date().toLocaleDateString()}`, steps: [{ id: crypto.randomUUID(), type: 'WELCOME_SCREEN', title: 'Welcome!', description: 'Follow the steps to earn rewards.', buttonText: 'Get Started' }], createdAt: new Date() };
-        setTemplates(p => [...p, newT]);
-        setSelectedTemplate(newT);
+    const handleAddNewTemplate = async () => {
+        const newTemplate = {
+            name: `New Event Template ${new Date().toLocaleDateString()}`,
+            steps: [{ 
+                id: crypto.randomUUID(), 
+                type: 'WELCOME_SCREEN', 
+                title: 'Welcome!', 
+                description: 'Follow the steps to earn rewards.', 
+                buttonText: 'Get Started' 
+            }],
+            createdAt: new Date()
+        };
+        
+        try {
+            const docRef = await addDoc(collection(db, 'event_template'), newTemplate);
+            const templateWithId = { id: docRef.id, ...newTemplate };
+            setTemplates(prev => [templateWithId, ...prev]);
+            setSelectedTemplate(templateWithId);
+        } catch (error) {
+            console.error('Error adding new template:', error);
+        }
     };
 
-    const handleSaveTemplate = () => {
-        setTemplates(p => p.map(t => t.id === formData.id ? formData : t));
-        alert("Template saved!");
+    const handleSaveTemplate = async () => {
+        if (!formData || !formData.id) return;
+        
+        try {
+            const templateRef = doc(db, 'event_template', formData.id);
+            await updateDoc(templateRef, {
+                name: formData.name,
+                steps: formData.steps,
+                updatedAt: new Date()
+            });
+            alert("Event template saved!");
+        } catch (error) {
+            console.error('Error saving template:', error);
+            alert("Error saving template. Please try again.");
+        }
+    };
+
+    const handleDeleteTemplate = async (templateId) => {
+        if (!templateId) return;
+        
+        try {
+            await deleteDoc(doc(db, 'event_template', templateId));
+            setTemplates(prev => prev.filter(t => t.id !== templateId));
+            setSelectedTemplate(templates.find(t => t.id !== templateId) || null);
+        } catch (error) {
+            console.error('Error deleting template:', error);
+            alert("Error deleting template. Please try again.");
+        }
     };
 
     const handleStepChange = (id, f, v) => setFormData(p => ({ ...p, steps: p.steps.map(s => s.id === id ? { ...s, [f]: v } : s) }));
@@ -474,10 +537,30 @@ function JourneyBuilder() {
         }));
     };
 
+    if (loading) {
+        return (
+            <div className="flex h-full">
+                <div className="w-64 bg-white p-4 rounded-l-xl border-r flex flex-col">
+                    <h2 className="text-lg font-bold mb-4">Event Templates</h2>
+                    <div className="text-center text-gray-500">
+                        <div className="w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                        <p>Loading templates...</p>
+                    </div>
+                </div>
+                <div className="flex-1 p-6 bg-white rounded-r-xl">
+                    <div className="text-center text-gray-500">
+                        <div className="w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                        <p>Loading...</p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="flex h-full">
             <div className="w-64 bg-white p-4 rounded-l-xl border-r flex flex-col">
-                <h2 className="text-lg font-bold mb-4">Journey Templates</h2>
+                <h2 className="text-lg font-bold mb-4">Event Templates</h2>
                 <ul className="space-y-1 flex-1">{templates.map(t => <li key={t.id}><a href="#" onClick={(e) => { e.preventDefault(); handleSelectTemplate(t); }} className={`block p-2 text-sm rounded-lg ${selectedTemplate?.id === t.id ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-gray-100'}`}>{t.name}</a></li>)}</ul>
                 <button onClick={handleAddNewTemplate} className="w-full flex items-center justify-center space-x-2 bg-gray-200 text-gray-700 font-semibold py-2 px-4 rounded-lg hover:bg-gray-300"><PlusCircleIcon /><span>New Template</span></button>
             </div>
@@ -486,12 +569,15 @@ function JourneyBuilder() {
                 <>
                     <div className="flex justify-between items-center mb-6">
                         <input type="text" value={formData.name || ''} onChange={(e) => setFormData(p => ({...p, name: e.target.value}))} className="text-2xl font-bold bg-transparent focus:border-indigo-500 outline-none border-b-2"/>
-                        <button onClick={handleSaveTemplate} className="bg-indigo-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-indigo-700">Save Template</button>
+                        <div className="flex items-center space-x-2">
+                            <button onClick={() => handleDeleteTemplate(formData.id)} className="text-red-600 hover:text-red-800 font-semibold py-2 px-4 rounded-lg">Delete</button>
+                            <button onClick={handleSaveTemplate} className="bg-indigo-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-indigo-700">Save Template</button>
+                        </div>
                     </div>
                     <div className="space-y-4">{formData.steps?.map((step, index) => (
                         <div key={step.id} className="bg-gray-50 p-4 rounded-lg border">
                             <div className="flex justify-between items-center mb-2">
-                                <span className="text-sm font-bold text-indigo-700">{index + 1}. {JOURNEY_STEP_TYPES[step.type]}</span>
+                                <span className="text-sm font-bold text-indigo-700">{index + 1}. {EVENT_STEP_TYPES[step.type]}</span>
                                 <div className="flex items-center space-x-1">
                                     <button onClick={() => moveStep(index, -1)} disabled={index === 0} className="p-1 disabled:opacity-30"><ChevronUpIcon/></button>
                                     <button onClick={() => moveStep(index, 1)} disabled={index === formData.steps.length - 1} className="p-1 disabled:opacity-30"><ChevronDownIcon/></button>
@@ -528,10 +614,10 @@ function JourneyBuilder() {
                         </div>
                     ))}</div>
                     <div className="mt-4 pt-4 border-t">
-                        <select onChange={(e) => addStep(e.target.value)} value="" className="p-2 border rounded-md"><option value="" disabled>-- Add new step --</option>{Object.entries(JOURNEY_STEP_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+                        <select onChange={(e) => addStep(e.target.value)} value="" className="p-2 border rounded-md"><option value="" disabled>-- Add new step --</option>{Object.entries(EVENT_STEP_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
                     </div>
                 </>
-            ) : (<div className="text-center text-gray-500">Select or create a journey template.</div>)}
+            ) : (<div className="text-center text-gray-500">Select or create an event template.</div>)}
             </div>
         </div>
     );
@@ -785,9 +871,27 @@ function ConfigDashboard({ campaign, onSave }) {
     const [formData, setFormData] = useState(campaign);
     const [isSaving, setIsSaving] = useState(false);
     const [showSuccess, setShowSuccess] = useState(false);
-    const [journeyTemplates, setJourneyTemplates] = useState(MOCK_JOURNEY_TEMPLATES);
+    const [eventTemplates, setEventTemplates] = useState([]);
     
     useEffect(() => { setFormData(campaign); }, [campaign]);
+
+    useEffect(() => {
+        // Set up real-time listener for Firestore event_template collection
+        const templatesCollection = collection(db, 'event_template');
+        const q = query(templatesCollection, orderBy('createdAt', 'desc'));
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const templatesData = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            setEventTemplates(templatesData);
+        }, (error) => {
+            console.error('Error fetching event templates:', error);
+        });
+
+        return () => unsubscribe();
+    }, []);
 
     const handleSaveChanges = () => {
         setIsSaving(true);
@@ -819,8 +923,8 @@ function ConfigDashboard({ campaign, onSave }) {
             </div>
             <ConfigCard title="Guides & Actions" icon={<BookOpenIcon />} description="Assign a guided user journey for this campaign.">
                 <select name="journeyTemplateId" value={formData.journeyTemplateId || ''} onChange={handleInputChange} className="w-full p-2 border rounded-lg">
-                    <option value="">-- No Journey Assigned --</option>
-                    {journeyTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    <option value="">-- No Event Template Assigned --</option>
+                    {eventTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
             </ConfigCard>
             <ConfigCard title="Budget" icon={<DollarSignIcon />} description="Set the total budget for this campaign's rewards.">
