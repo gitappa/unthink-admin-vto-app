@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { collection, onSnapshot, query, orderBy, limit, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from './firebase';
+import EventPage from './EventPage';
 
 console.log('db', db._databaseId);
 // --- Mock Data & Constants ---
@@ -108,11 +110,11 @@ const LayersIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" heig
 
 const ACTION_TYPES = { UGC_CREATION: "Add to showcase collection", WISHLIST_ADD: "Add to Wishlist", REFERRAL: "User Referral", SOCIAL_SHARE: "Social Media Share", FEEDBACK: "Provide Feedback" };
 const REWARD_TYPES = { PERCENTAGE: "Percentage Discount", FIXED_AMOUNT: "Fixed Amount Discount", FREE_ITEM: "Free Item", POINTS: "Loyalty Points" };
-const EVENT_STEP_TYPES = { WELCOME_SCREEN: "Welcome Screen", ACTION_VTO: "Virtual Try-On", ACTION_SHOWCASE: "Add to Showcase", ACTION_WISHLIST: "Add to Wishlist", THANK_YOU_SCREEN: "Thank You Screen" };
+const EVENT_STEP_TYPES = { WELCOME_SCREEN: "Welcome Screen", TRY_ON: "Virtual Try-On", ACTION_SHOWCASE: "Add to Showcase", ACTION_WISHLIST: "Add to Wishlist", THANK_YOU_SCREEN: "Thank You Screen" };
 const RULE_ACTION_TYPES = { SEND_IN_APP_MESSAGE: "Send In-App Message", SEND_COUPON: "Send Coupon", SEND_EMAIL: "Send Email", SEND_HCS_PERMISSION_REQUEST: "Send HCS Permission Request", SEND_HCS_20_TOKEN: "Send HTS-20 Token" };
 
 
-export default function App() {
+function MainApp() {
     const [currentView, setCurrentView] = useState('config');
     const [campaigns, setCampaigns] = useState(MOCK_CAMPAIGNS);
     const [selectedCampaign, setSelectedCampaign] = useState(MOCK_CAMPAIGNS[0]);
@@ -169,6 +171,17 @@ export default function App() {
                 {currentView === 'actions' && <ActionsBuilder />}
             </main>
         </div>
+    );
+}
+
+export default function App() {
+    return (
+        <Router>
+            <Routes>
+                <Route path="/" element={<MainApp />} />
+                <Route path="/event/:event_id" element={<EventPage />} />
+            </Routes>
+        </Router>
     );
 }
 
@@ -441,13 +454,25 @@ function EventTemplateBuilder() {
     const handleSaveTemplate = async () => {
         if (!formData || !formData.id) return;
         
+        const dataToSave = {
+            name: formData.name,
+            steps: formData.steps,
+            updatedAt: new Date()
+        };
+
+        if (!formData.event_id) {
+            dataToSave.event_id = crypto.randomUUID();
+        }
+
         try {
             const templateRef = doc(db, 'event_template', formData.id);
-            await updateDoc(templateRef, {
-                name: formData.name,
-                steps: formData.steps,
-                updatedAt: new Date()
-            });
+            await updateDoc(templateRef, dataToSave);
+
+            if (dataToSave.event_id) {
+                const updatedTemplate = { ...formData, ...dataToSave };
+                setSelectedTemplate(updatedTemplate);
+            }
+            
             alert("Event template saved!");
         } catch (error) {
             console.error('Error saving template:', error);
@@ -470,10 +495,38 @@ function EventTemplateBuilder() {
 
     const handleStepChange = (id, f, v) => setFormData(p => ({ ...p, steps: p.steps.map(s => s.id === id ? { ...s, [f]: v } : s) }));
 
+    const handleStepTypeChange = (id, newType) => {
+        setFormData(p => ({
+            ...p,
+            steps: p.steps.map(s => {
+                if (s.id === id) {
+                    const newStep = { id: s.id, type: newType };
+                    if (newType.includes('ACTION') || newType === 'TRY_ON') {
+                        newStep.prompt = s.title || s.prompt || 'New Prompt';
+                        newStep.description = s.description || 'Step Description';
+                        newStep.buttonText = s.buttonText || 'Next';
+                    } else {
+                        newStep.title = s.prompt || s.title || 'New Title';
+                        newStep.description = s.description || 'Step Description';
+                        if (newType !== 'THANK_YOU_SCREEN') {
+                            newStep.buttonText = s.buttonText || 'Next';
+                        }
+                    }
+                    if (newType === 'TRY_ON') {
+                        newStep.personImageUrl = s.personImageUrl || null;
+                        newStep.tryOnItems = s.tryOnItems || [];
+                    }
+                    return newStep;
+                }
+                return s;
+            })
+        }));
+    };
+
     const addStep = (type) => {
         let newStep = { id: crypto.randomUUID(), type, title: 'New Step Title', description: 'Add specific instructions for the user here.', buttonText: 'Next' };
-        if (type.includes('ACTION')) { newStep.prompt = newStep.title; delete newStep.title; }
-        if (type === 'ACTION_VTO') { newStep = { ...newStep, prompt: 'Upload your photo and select an item to try on.', personImageUrl: null, tryOnItems: [] }; }
+        if (type.includes('ACTION') || type === 'TRY_ON') { newStep.prompt = newStep.title; delete newStep.title; }
+        if (type === 'TRY_ON') { newStep = { ...newStep, prompt: 'Upload your photo and select an item to try on.', personImageUrl: null, tryOnItems: [] }; }
         if (type === 'THANK_YOU_SCREEN') { delete newStep.buttonText; }
         setFormData(p => ({ ...p, steps: [...(p.steps || []), newStep] }));
     };
@@ -571,13 +624,18 @@ function EventTemplateBuilder() {
                         <input type="text" value={formData.name || ''} onChange={(e) => setFormData(p => ({...p, name: e.target.value}))} className="text-2xl font-bold bg-transparent focus:border-indigo-500 outline-none border-b-2"/>
                         <div className="flex items-center space-x-2">
                             <button onClick={() => handleDeleteTemplate(formData.id)} className="text-red-600 hover:text-red-800 font-semibold py-2 px-4 rounded-lg">Delete</button>
-                            <button onClick={handleSaveTemplate} className="bg-indigo-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-indigo-700">Save Template</button>
+                            <button onClick={handleSaveTemplate} className="bg-indigo-600 text-black font-semibold py-2 px-6 rounded-lg hover:bg-indigo-700">Save Template</button>
                         </div>
                     </div>
                     <div className="space-y-4">{formData.steps?.map((step, index) => (
                         <div key={step.id} className="bg-gray-50 p-4 rounded-lg border">
                             <div className="flex justify-between items-center mb-2">
-                                <span className="text-sm font-bold text-indigo-700">{index + 1}. {EVENT_STEP_TYPES[step.type]}</span>
+                                <div className="flex items-center space-x-2">
+                                    <span className="text-sm font-bold text-gray-500">{index + 1}.</span>
+                                    <select value={step.type} onChange={(e) => handleStepTypeChange(step.id, e.target.value)} className="p-1 border rounded-md bg-white text-sm font-bold text-indigo-700">
+                                        {Object.entries(EVENT_STEP_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                                    </select>
+                                </div>
                                 <div className="flex items-center space-x-1">
                                     <button onClick={() => moveStep(index, -1)} disabled={index === 0} className="p-1 disabled:opacity-30"><ChevronUpIcon/></button>
                                     <button onClick={() => moveStep(index, 1)} disabled={index === formData.steps.length - 1} className="p-1 disabled:opacity-30"><ChevronDownIcon/></button>
@@ -585,10 +643,10 @@ function EventTemplateBuilder() {
                                 </div>
                             </div>
                             <div className="space-y-2">
-                                <input type="text" placeholder="Title / Prompt" value={step.title || step.prompt || ''} onChange={e => handleStepChange(step.id, step.type.includes('ACTION') ? 'prompt' : 'title', e.target.value)} className="w-full p-1 border-b bg-transparent font-semibold" />
+                                <input type="text" placeholder="Title / Prompt" value={step.title || step.prompt || ''} onChange={e => handleStepChange(step.id, (step.type.includes('ACTION') || step.type === 'TRY_ON') ? 'prompt' : 'title', e.target.value)} className="w-full p-1 border-b bg-transparent font-semibold" />
                                 <textarea placeholder="Add specific instructions for the user..." value={step.description || ''} onChange={e => handleStepChange(step.id, 'description', e.target.value)} className="w-full p-1 border-b bg-transparent text-sm text-gray-600" rows="2" />
                                 { 'buttonText' in step && <input type="text" placeholder="Button Text" value={step.buttonText} onChange={e => handleStepChange(step.id, 'buttonText', e.target.value)} className="w-full p-1 border-b bg-transparent text-sm" /> }
-                                { step.type === 'ACTION_VTO' && (
+                                { step.type === 'TRY_ON' && (
                                     <div className="pt-4 mt-2 border-t space-y-4">
                                         <div>
                                             <label className="block text-sm font-medium text-gray-700 mb-1">Person's Photo</label>
@@ -950,4 +1008,3 @@ function ConfigDashboard({ campaign, onSave }) {
 function ConfigCard({ title, icon, description, children }) { return (<div className="bg-white p-6 rounded-xl border border-gray-200"><div className="flex items-start space-x-4 mb-4"><div className="flex-shrink-0 text-indigo-600 bg-indigo-50 p-3 rounded-lg">{icon}</div><div><h3 className="text-lg font-semibold">{title}</h3><p className="text-sm text-gray-500">{description}</p></div></div><div>{children}</div></div>); }
 function RewardRule({ rule, onChange, onRemove }) { return (<div className="grid grid-cols-2 md:grid-cols-5 gap-4 p-4 bg-gray-50 rounded-lg border items-end"><div className="col-span-2 md:col-span-1"><label className="block text-xs font-medium text-gray-500 mb-1">User Action</label><select value={rule.action} onChange={(e) => onChange(rule.id, 'action', e.target.value)} className="w-full p-2 text-sm rounded-md">{Object.entries(ACTION_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div><div className="col-span-1"><label className="block text-xs font-medium text-gray-500 mb-1">Trigger Count</label><input type="number" min="1" value={rule.actionCount || 1} onChange={(e) => onChange(rule.id, 'actionCount', parseInt(e.target.value, 10) || 1)} className="w-full p-2 text-sm rounded-md"/></div><div className="col-span-2 md:col-span-1"><label className="block text-xs font-medium text-gray-500 mb-1">Reward Type</label><select value={rule.rewardType} onChange={(e) => onChange(rule.id, 'rewardType', e.target.value)} className="w-full p-2 text-sm rounded-md">{Object.entries(REWARD_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div><div className="col-span-1"><label className="block text-xs font-medium text-gray-500 mb-1">Value</label><input type="number" value={rule.rewardValue} onChange={(e) => onChange(rule.id, 'rewardValue', parseInt(e.target.value, 10))} className="w-full p-2 text-sm rounded-md"/></div><div className="col-span-2 md:col-span-1 flex justify-end"><button onClick={() => onRemove(rule.id)} className="p-2 text-gray-400 hover:text-red-600 rounded-md"><Trash2Icon /></button></div></div>); }
 function ActionAlertRule({ rule, onChange, onRemove }) { return (<div className="grid grid-cols-3 gap-4 items-center p-3 bg-gray-50 rounded-lg border"><div className="col-span-1"><label className="block text-xs font-medium text-gray-500 mb-1">Action</label><select value={rule.action} onChange={(e) => onChange(rule.id, 'action', e.target.value)} className="w-full p-2 text-sm rounded-md">{Object.entries(ACTION_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div><div className="col-span-1"><label className="block text-xs font-medium text-gray-500 mb-1">Threshold</label><input type="number" min="1" value={rule.threshold || 1} onChange={(e) => onChange(rule.id, 'threshold', parseInt(e.target.value, 10) || 1)} className="w-full p-2 text-sm rounded-md"/></div><div className="col-span-1 flex justify-end"><button onClick={() => onRemove(rule.id)} className="p-2 text-gray-400 hover:text-red-600 rounded-md"><Trash2Icon /></button></div></div>); }
-
